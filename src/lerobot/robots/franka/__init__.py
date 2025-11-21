@@ -14,7 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .franka_robot import FrankaRobot
+from .franka_robot import FrankaRemoteConfig, FrankaRemoteRobot
+from .franka_client import FrankaClient
 
-__all__ = ["FrankaConfig", "FrankaRobot"]
+__all__ = ["FrankaRemoteConfig", "FrankaRemoteRobot", "FrankaClient"]
 
