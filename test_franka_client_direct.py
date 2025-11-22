@@ -35,8 +35,7 @@ def test_franka_client_direct():
     print("=" * 60)
     
     # Update server address if needed
-    server_address = "tcp://localhost:5555"
-    
+    server_address = "tcp://172.16.0.1:5555"   # Nook running frankz server
     try:
         # Test 1: Create client and connect
         print("\n[1/4] Creating client and connecting...")
@@ -68,9 +67,7 @@ def test_franka_client_direct():
         # Test 4: Send a small test action
         print("\n[4/4] Sending test action...")
         # Create a small delta action (8 values: 7 joints + 1 gripper)
-        action = np.zeros(8)
-        action[0] = 0.7  # Small delta on first joint (0.01 rad)
-        action[7] = 0.04   # Keep gripper open
+        action = np.zeros(8)  # Keep gripper open
         
         print(f"  Sending action: {action}")
         obs_after = client.step(action, blocking=True)
