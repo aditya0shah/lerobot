@@ -3,8 +3,6 @@
 
 import sys
 import time
-import importlib.util
-from pathlib import Path
 
 # Check for required dependencies
 try:
@@ -19,15 +17,11 @@ except ImportError:
     print("Error: pynput is not installed. Install it with: pip install pynput")
     sys.exit(1)
 
-# Import FrankaClient
-franka_client_path = Path(__file__).parent / "src" / "lerobot" / "robots" / "franka" / "franka_client.py"
-spec = importlib.util.spec_from_file_location("franka_client", franka_client_path)
-franka_client_module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(franka_client_module)
-FrankaClient = franka_client_module.FrankaClient
+# Import FrankaRemoteRobot
+from lerobot.robots.franka import FrankaRemoteRobot, FrankaRemoteConfig
 
 # Control parameters
-JOINT_STEP = 0.2  # radians per keypress
+JOINT_STEP = 0.4  # radians per keypress
 GRIPPER_STEP = 0.02  # gripper width per keypress
 FPS = 10  # Control frequency
 
@@ -84,24 +78,35 @@ def on_release(key):
     except AttributeError:
         pass
 
-def update_action():
-    """Update action based on pressed keys."""
-    # Reset action
-    action = np.zeros(8)
+def compute_action_from_keyboard(current_obs):
+    """
+    Compute target action (absolute positions) based on keyboard input and current observation.
+    Similar to how phone_to_so100 computes joint actions from teleop input.
+    """
+    # Start with current positions
+    target_action = {}
+    joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"]
+    
+    # Initialize target positions to current positions
+    for joint_name in joint_names:
+        target_action[f"{joint_name}.pos"] = current_obs.get(f"{joint_name}.pos", 0.0)
+    
+    # Initialize gripper to current width
+    target_action["gripper.width"] = current_obs.get("gripper.width", 0.04)
     
     # Joint controls: number keys 1-7 for joints 1-7
     # Shift + number (or shifted chars like !@#) for negative direction
     joint_map = {
-        '1': 0,  # Joint 1
-        '2': 1,  # Joint 2
-        '3': 2,  # Joint 3
-        '4': 3,  # Joint 4
-        '5': 4,  # Joint 5
-        '6': 5,  # Joint 6
-        '7': 6,  # Joint 7
+        '1': 'joint1',
+        '2': 'joint2',
+        '3': 'joint3',
+        '4': 'joint4',
+        '5': 'joint5',
+        '6': 'joint6',
+        '7': 'joint7',
     }
     
-    # Check for joint movements
+    # Apply deltas to current positions
     for key_char in pressed_keys:
         # Check for negative prefix (from shifted keys)
         is_negative = False
@@ -113,19 +118,21 @@ def update_action():
             is_negative = True
         
         if key_char in joint_map:
-            joint_idx = joint_map[key_char]
+            joint_name = joint_map[key_char]
+            current_pos = target_action[f"{joint_name}.pos"]
             if is_negative:
-                action[joint_idx] = -JOINT_STEP
+                target_action[f"{joint_name}.pos"] = current_pos - JOINT_STEP
             else:
-                action[joint_idx] = JOINT_STEP
+                target_action[f"{joint_name}.pos"] = current_pos + JOINT_STEP
     
     # Gripper controls: 'g' to open, 'h' to close
+    current_gripper = target_action["gripper.width"]
     if 'g' in pressed_keys:
-        action[7] = GRIPPER_STEP  # Open
+        target_action["gripper.width"] = current_gripper + GRIPPER_STEP  # Open
     elif 'h' in pressed_keys:
-        action[7] = -GRIPPER_STEP  # Close
+        target_action["gripper.width"] = current_gripper - GRIPPER_STEP  # Close
     
-    return action
+    return target_action
 
 def print_controls():
     """Print control instructions."""
@@ -150,42 +157,49 @@ def main():
     listener.start()
     
     try:
-        # Connect to robot
-        print(f"Connecting to {server_address}...")
-        client = FrankaClient(
+        # Create robot config - use joint_position mode like phone_to_so100 example
+        config = FrankaRemoteConfig(
             server_address=server_address,
-            control_mode="joint_delta",
-            dynamics_factor=0.2,
-            control_hz=FPS,
+            control_mode="joint_position",  # Use position mode like so100 example
         )
-        print("✓ Connected!")
         
-        # Reset robot
-        print("Resetting robot...")
-        client.reset()
-        print("✓ Robot reset")
+        # Initialize robot
+        robot = FrankaRemoteRobot(config)
+        
+        # Connect to robot
+        print(f"Connecting to {config.server_address}...")
+        robot.connect()
+        print("✓ Connected!")
         
         print("\nStarting teleoperation loop. Use keyboard to control the robot.")
         print("Press ESC to exit.\n")
         
-        # Main control loop
+        if not robot.is_connected:
+            raise ValueError("Robot is not connected!")
+        
+        # Main control loop - similar structure to phone_to_so100/teleoperate.py
         while True:
             t0 = time.perf_counter()
             
-            # Update action based on keyboard input
-            action = update_action()
+            # Get robot observation (like phone_to_so100 example)
+            robot_obs = robot.get_observation()
             
-            # Send action if non-zero
-            if np.any(action != 0):
-                obs = client.step(action, blocking=True)
-                # Print current joint positions
-                print(f"\rAction: {action[:7]} | Gripper: {action[7]:.3f} | "
-                      f"qpos[0]: {obs['qpos'][0]:.3f}", end='', flush=True)
-            else:
-                # Still send zero action to maintain connection
-                client.step(np.zeros(8), blocking=True)
+            # Compute target action from keyboard input (like phone_to_so100 processes phone input)
+            joint_action = compute_action_from_keyboard(robot_obs)
             
-            # Maintain FPS
+            # Send action to robot (exactly like phone_to_so100 example)
+            _ = robot.send_action(joint_action)
+            
+            # Print status
+            joint1_pos = robot_obs.get("joint1.pos", 0.0)
+            joint1_target = joint_action.get("joint1.pos", 0.0)
+            gripper_width = robot_obs.get("gripper.width", 0.0)
+            gripper_target = joint_action.get("gripper.width", 0.0)
+            print(f"\rjoint1: {joint1_pos:.3f} -> {joint1_target:.3f} | "
+                  f"gripper: {gripper_width:.3f} -> {gripper_target:.3f}", 
+                  end='', flush=True)
+            
+            # Maintain FPS (using busy_wait like phone_to_so100 would, but time.sleep is fine too)
             elapsed = time.perf_counter() - t0
             sleep_time = max(0, 1.0 / FPS - elapsed)
             if sleep_time > 0:
@@ -199,9 +213,9 @@ def main():
         traceback.print_exc()
     finally:
         listener.stop()
-        if 'client' in locals():
+        if 'robot' in locals():
             print("\nClosing connection...")
-            client.close()
+            robot.disconnect()
             print("✓ Disconnected")
 
 if __name__ == "__main__":

@@ -9,10 +9,11 @@ from functools import cached_property
 from lerobot.robots.franka.franka_client import FrankaClient
 
 class FrankaRemoteConfig(RobotConfig):
-    server_address: str = "tcp://172.16.0.2:5555"  # Nook running frankz server
-    control_mode: str = "joint_delta"
-    dynamics_factor: float = 0.2
-    gripper: bool = True
+    def __init__(self, server_address: str = "tcp://172.16.0.1:5555", control_mode: str = "joint_delta", dynamics_factor: float = 0.2, gripper: bool = True):
+        self.server_address = server_address
+        self.control_mode = control_mode
+        self.dynamics_factor = dynamics_factor
+        self.gripper = gripper
 
 class FrankaRemoteRobot(Robot):
     config_class = FrankaRemoteConfig
