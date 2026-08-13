@@ -14,20 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_franka import FrankaRobotConfig
-from .constants import (
-    FRANKA_HOME_QPOS,
-    FRANKA_JOINT_POS_MAX,
-    FRANKA_JOINT_POS_MIN,
-    FRANKA_JOINTS,
-)
-from .franka import FrankaRobot
+from .config_franka_keyboard import FrankaKeyboardTeleopConfig
+from .franka_keyboard import FrankaKeyboardTeleop
 
-__all__ = [
-    "FRANKA_HOME_QPOS",
-    "FRANKA_JOINTS",
-    "FRANKA_JOINT_POS_MAX",
-    "FRANKA_JOINT_POS_MIN",
-    "FrankaRobot",
-    "FrankaRobotConfig",
-]
+__all__ = ["FrankaKeyboardTeleop", "FrankaKeyboardTeleopConfig"]
