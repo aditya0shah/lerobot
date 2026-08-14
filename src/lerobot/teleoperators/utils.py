@@ -49,6 +49,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .so101_leader import SO101Leader
 
         return SO101Leader(config)
+    elif config.type == "franka_keyboard":
+        from .franka_keyboard import FrankaKeyboardTeleop
+
+        return FrankaKeyboardTeleop(config)
     elif config.type == "mock_teleop":
         from tests.mocks.mock_teleop import MockTeleop
 

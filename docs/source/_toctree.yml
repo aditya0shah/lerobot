@@ -79,6 +79,8 @@
     title: Hope Jr
   - local: reachy2
     title: Reachy 2
+  - local: franka
+    title: Franka Emika Panda
   title: "Robots"
 - sections:
   - local: phone_teleop

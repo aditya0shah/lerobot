@@ -1,0 +1,118 @@
+# Franka Emika Panda
+
+The `franka` robot integrates a Franka Emika Panda (or FR3) arm into LeRobot through a Franka Control Interface (FCI) server that runs on the arm's realtime control PC. The `FrankaRobot` class is a thin ZMQ client of that server; it does not talk to the arm directly.
+
+The server this integration expects is [memmelma/frankz](https://github.com/memmelma/frankz) — a small Python wrapper around [`franky`](https://github.com/timschneider42/franky) that speaks the wire protocol documented below. LeRobot ships the client only; you set up the server yourself.
+
+## Prerequisites
+
+- A Franka Emika Panda or FR3 with the Franka Control Interface (FCI) unlocked from the Franka Desk UI.
+- A separate realtime control PC on the same network as the robot's FCI subnet (typically `172.16.0.0/16`), running a [frankz](https://github.com/memmelma/frankz)-compatible ZMQ server.
+- A working area that is clear of humans and cables — this is a 3 kg-payload industrial arm.
+
+## Installation
+
+```bash
+pip install -e ".[franka]"
+```
+
+This installs `pyzmq`. All other dependencies are already covered by lerobot core.
+
+## Safety
+
+> **Restart the frankz server before every session.** The server silently ignores the requested control mode if it was already initialized by an earlier client, and its reply for an already-initialized process is byte-identical to a fresh init. If an earlier process configured it in a delta mode, `FrankaRobot` will send absolute joint targets that the server interprets as deltas — a very fast slew that can slam into the joint limits. `FrankaRobot` defaults `server_control_mode_check=True`, which requires the server to echo its effective control mode; if you are running the stock frankz server, apply this one-line patch to its `init` handler so the check can succeed:
+>
+> ```python
+> # In frankz/network/server.py, inside the init branch:
+> return {"result": {"status": "initialized", "control_mode": self.control_mode}}
+> ```
+>
+> Only set `--robot.server_control_mode_check=false` if you can guarantee the server's mode by other means.
+
+Additional safeguards this integration applies:
+
+- `control_mode` is hardcoded to `joint_position` on the wire; delta and cartesian modes are not exposed.
+- `max_relative_target` defaults to `0.05` rad and caps every per-step joint change.
+- All joint targets are clipped to the Panda position limits before being sent (the server does not clip in `joint_position` mode).
+- `home_on_connect` defaults to `False`; the arm never moves during `connect()` unless you explicitly opt in or call `robot.home()`.
+
+Cartesian control, HIL-SERL, and `joint_delta` are intentionally **not supported** in this release.
+
+## Units and gripper contract
+
+- Joint action and observation values are **absolute positions in radians**. This is unlike SO-101 (degrees or -100..100) and every other LeRobot arm, and it is a permanent commitment of the dataset schema.
+- The gripper is **binary**. `gripper.pos` is exposed in `[0, 100]` for consistency with SO-101; on the wire a value `>= 50` opens the hand and `< 50` closes it. The `send_action` return value is quantized to `0.0` or `100.0`, so the recorded action replays exactly.
+- On the wire, `gripper_state` is the normalized opening `width / 0.08` in `[0, 1]`, **not** metres. (The frankz README erroneously calls it metres — the actual value is normalized.)
+
+## Security
+
+The ZMQ transport uses `pickle` for message framing because that is what the server expects. Only ever connect to a server you control over a **trusted, isolated network** (the Franka FCI subnet). Do not expose port 5555 to any wider network.
+
+## Wire protocol
+
+- Transport: ZMQ `REQ`/`REP`, one send followed by one recv per transaction.
+- Encoding: `pickle`-serialized Python dicts on both sides.
+- Request: `{"command": <str>, "data": <dict | None>}`. Command is one of `init`, `reset`, `step`, `get_obs`.
+- Reply: `{"result": <any>}` on success, or `{"error": <str>}` on failure.
+- `init` payload: `{"control_mode": "joint_position", "dynamics_factor": <float>, "reset_qpos": <list[7]>}`.
+- `step` action: length-7 (joints only) or length-8 (joints + binary gripper) numpy array of absolute joint positions in radians.
+
+## Keyboard teleoperation
+
+The `franka_keyboard` teleoperator is a virtual leader arm that emits absolute joint targets:
+
+| Key | Effect |
+| --- | --- |
+| `1` – `7` | Move joint 1-7 in the positive direction |
+| `!` `@` `#` `$` `%` `^` `&` | Move joint 1-7 in the negative direction (shifted `1`-`7`) |
+| `o` | Open the gripper |
+| `c` | Close the gripper |
+| `ESC` | Disconnect the teleoperator |
+
+Keys are integrated over wall-clock time at `max_joint_velocity_rad_s` per second, so the motion rate is independent of the control loop frequency. `max_dt_s` caps a single step in case the loop stalls.
+
+## CLI usage
+
+Teleoperate:
+
+```bash
+lerobot-teleoperate \
+    --robot.type=franka \
+    --robot.remote_ip=172.16.0.1 \
+    --robot.id=my_panda \
+    --robot.max_relative_target=0.05 \
+    --teleop.type=franka_keyboard \
+    --teleop.max_joint_velocity_rad_s=0.2 \
+    --teleop.id=kb \
+    --fps=10 \
+    --display_data=true
+```
+
+Record a dataset:
+
+```bash
+lerobot-record \
+    --robot.type=franka \
+    --robot.remote_ip=172.16.0.1 \
+    --robot.id=my_panda \
+    --robot.max_relative_target=0.05 \
+    --teleop.type=franka_keyboard \
+    --teleop.max_joint_velocity_rad_s=0.2 \
+    --teleop.id=kb \
+    --dataset.repo_id=<hf_username>/franka_pick_place \
+    --dataset.fps=10 \
+    --dataset.num_episodes=10 \
+    --dataset.single_task="Pick and place the block."
+```
+
+Adding cameras is the same as for any other LeRobot arm, e.g.:
+
+```bash
+--robot.cameras='{"wrist": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30}}'
+```
+
+Programmatic examples live in `examples/franka/`.
+
+## Attribution
+
+The server-side counterpart of this integration is [memmelma/frankz](https://github.com/memmelma/frankz) — a Python wrapper around [`franky`](https://github.com/timschneider42/franky). LeRobot documents that project's wire protocol but does not vendor its source.
